@@ -9,7 +9,7 @@ app.use(cors());
 app.use(express.json());
 
 // MongoDB connect
-mongoose.connect("mongodb://localhost:27017/authDB")
+mongoose.connect("mongodb+srv://saiyadayaz116:ca786caa@cluster0.oq51gtz.mongodb.net/medical?appName=Cluster0")
   .then(() => console.log("MongoDB Connected"))
   .catch(err => console.log(err));
 
