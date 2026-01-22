@@ -5,222 +5,234 @@ const nodemailer = require("nodemailer");
 
 const User = require("../models/User");
 const RegistrationOTP = require("../models/RegistrationOTP");
+
 const router = express.Router();
 
-// SEND REGISTRATION OTP
+/* =========================
+   EMAIL TRANSPORTER (REUSE)
+========================= */
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS, // APP PASSWORD
+  },
+  tls: {
+    rejectUnauthorized: false,
+  },
+});
+
+transporter.verify((err) => {
+  if (err) console.error("Email transporter error:", err);
+  else console.log("✅ Email server ready");
+});
+
+/* =========================
+   SEND REGISTRATION OTP
+========================= */
 router.post("/send-registration-otp", async (req, res) => {
-  const { email, password } = req.body;
-  const normalizedEmail = email?.trim().toLowerCase();
-
-  if (!normalizedEmail.endsWith("@gmail.com")) {
-    return res.status(400).json({ message: "Only @gmail.com emails are allowed" });
-  }
-
-  if (password && password.length < 8) {
-    return res.status(400).json({ message: "Password must be at least 8 characters long" });
-  }
-
   try {
-    const emailExists = await User.findOne({ email: { $regex: new RegExp(`^${normalizedEmail}$`, "i") } });
-    if (emailExists) {
-      return res.status(400).json({ message: "Email is already registered" });
+    const { email, password } = req.body;
+    const normalizedEmail = email?.trim().toLowerCase();
+
+    if (!normalizedEmail || !normalizedEmail.endsWith("@gmail.com")) {
+      return res
+        .status(400)
+        .json({ message: "Only @gmail.com emails allowed" });
     }
 
-    // Generate 6-digit OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    if (!password || password.length < 8) {
+      return res
+        .status(400)
+        .json({ message: "Password must be at least 8 characters" });
+    }
 
-    // Save/Update OTP in DB
-    await RegistrationOTP.findOneAndUpdate(
-      { email: normalizedEmail },
-      { otp, createdAt: Date.now() },
-      { upsert: true, new: true }
-    );
-
-    // Send Email
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
+    const emailExists = await User.findOne({
+      email: { $regex: new RegExp(`^${normalizedEmail}$`, "i") },
     });
 
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
+    if (emailExists) {
+      return res.status(400).json({ message: "Email already registered" });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    await RegistrationOTP.findOneAndUpdate(
+      { email: normalizedEmail },
+      { otp, expiresAt: Date.now() + 10 * 60 * 1000 },
+      { upsert: true, new: true },
+    );
+
+    await transporter.sendMail({
+      from: `"Miya Huzoor" <${process.env.EMAIL_USER}>`,
       to: normalizedEmail,
-      subject: "Registration OTP for Miya Huzoor",
-      text: `Your OTP for registration is: ${otp}. It is valid for 10 minutes.`,
-    };
+      subject: "Registration OTP",
+      text: `Your OTP is ${otp}. It is valid for 10 minutes.`,
+    });
 
-    await transporter.sendMail(mailOptions);
-    res.json({ message: "OTP sent to your email" });
-
-  } catch (error) {
-    console.error("Registration OTP Error:", error);
-    res.status(500).json({ message: "Error sending OTP", error: error.message });
+    res.json({ message: "OTP sent successfully" });
+  } catch (err) {
+    console.error("Send OTP Error:", err);
+    res.status(500).json({ message: "Failed to send OTP" });
   }
 });
 
-// REGISTER
+/* =========================
+   REGISTER USER
+========================= */
 router.post("/register", async (req, res) => {
-  const { username, email, password, otp } = req.body;
-  const normalizedEmail = email?.trim().toLowerCase();
-
-  if (!normalizedEmail.endsWith("@gmail.com")) {
-    return res.status(400).json({ message: "Only @gmail.com emails are allowed" });
-  }
-
-  if (password && password.length < 8) {
-    return res.status(400).json({ message: "Password must be at least 8 characters long" });
-  }
-
   try {
-    // Verify OTP
-    const otpRecord = await RegistrationOTP.findOne({ email: normalizedEmail, otp });
+    const { username, email, password, otp } = req.body;
+    const normalizedEmail = email?.trim().toLowerCase();
+
+    const otpRecord = await RegistrationOTP.findOne({
+      email: normalizedEmail,
+      otp,
+      expiresAt: { $gt: Date.now() },
+    });
+
     if (!otpRecord) {
       return res.status(400).json({ message: "Invalid or expired OTP" });
     }
 
-    // Check if email already exists
-    const emailExists = await User.findOne({ email: { $regex: new RegExp(`^${normalizedEmail}$`, "i") } });
+    const emailExists = await User.findOne({
+      email: { $regex: new RegExp(`^${normalizedEmail}$`, "i") },
+    });
+
     if (emailExists) {
-      return res.status(400).json({ message: "Email is already taken" });
+      return res.status(400).json({ message: "Email already in use" });
     }
 
     const usernameExists = await User.findOne({ username });
     if (usernameExists) {
-      return res.status(400).json({ message: "Username is already taken" });
+      return res.status(400).json({ message: "Username already taken" });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const newUser = new User({
-      username: username?.trim(),
+    await User.create({
+      username: username.trim(),
       email: normalizedEmail,
-      password: hashedPassword
+      password: hashedPassword,
     });
 
-    await newUser.save();
-
-    // Delete OTP record after successful registration
     await RegistrationOTP.deleteOne({ email: normalizedEmail });
 
-    res.json({ message: "User Registered Successfully" });
-  } catch (error) {
-    res.status(500).json({ message: "Server Error" });
+    res.json({ message: "User registered successfully" });
+  } catch (err) {
+    console.error("Register Error:", err);
+    res.status(500).json({ message: "Registration failed" });
   }
 });
 
-// LOGIN
+/* =========================
+   LOGIN
+========================= */
 router.post("/login", async (req, res) => {
-  const { usernameOrEmail, password } = req.body;
-  const normalizedInput = usernameOrEmail?.trim().toLowerCase();
+  try {
+    const { usernameOrEmail, password } = req.body;
+    const normalized = usernameOrEmail.trim().toLowerCase();
 
-  const user = await User.findOne({
-    $or: [
-      { email: { $regex: new RegExp(`^${normalizedInput}$`, "i") } },
-      { username: usernameOrEmail?.trim() }
-    ]
-  });
+    const user = await User.findOne({
+      $or: [
+        { email: { $regex: new RegExp(`^${normalized}$`, "i") } },
+        { username: usernameOrEmail.trim() },
+      ],
+    });
 
-  if (!user) return res.status(400).json({ message: "User not found" });
+    if (!user) return res.status(400).json({ message: "User not found" });
 
-  const isMatch = await bcrypt.compare(password, user.password);
-  if (!isMatch) return res.status(400).json({ message: "Invalid password" });
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) return res.status(400).json({ message: "Invalid password" });
 
-  const token = jwt.sign({ id: user._id }, "SECRET123", { expiresIn: "1h" });
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+      expiresIn: "1h",
+    });
 
-  res.json({
-    message: "Login Successful",
-    token,
-    user: { id: user._id, username: user.username, email: user.email }
-  });
+    res.json({
+      message: "Login successful",
+      token,
+      user: { id: user._id, username: user.username, email: user.email },
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Login error" });
+  }
 });
 
-// FORGOT PASSWORD - SEND OTP
+/* =========================
+   FORGOT PASSWORD - SEND OTP
+========================= */
 router.post("/forgot-password", async (req, res) => {
-  const { email } = req.body;
-  const normalizedEmail = email?.trim().toLowerCase();
-
-  console.log("Forgot Password Request for:", normalizedEmail);
-
   try {
-    const user = await User.findOne({ email: { $regex: new RegExp(`^${normalizedEmail}$`, "i") } });
+    const normalizedEmail = req.body.email?.trim().toLowerCase();
+
+    const user = await User.findOne({
+      email: { $regex: new RegExp(`^${normalizedEmail}$`, "i") },
+    });
+
     if (!user) {
-      console.log("User not found in DB for email:", normalizedEmail);
       return res.status(404).json({ message: "User not found" });
     }
 
-    // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
     user.resetOTP = otp;
-    user.resetOTPExpires = Date.now() + 600000; // 10 mins expiry
+    user.resetOTPExpires = Date.now() + 10 * 60 * 1000;
     await user.save();
 
-    // Send Email
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
+    await transporter.sendMail({
+      from: `"Miya Huzoor" <${process.env.EMAIL_USER}>`,
+      to: normalizedEmail,
+      subject: "Password Reset OTP",
+      text: `Your password reset OTP is ${otp}. Valid for 10 minutes.`,
     });
 
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: email,
-      subject: "Password Reset OTP",
-      text: `Your OTP for password reset is: ${otp}. It is valid for 10 minutes.`,
-    };
-
-    await transporter.sendMail(mailOptions);
-    res.json({ message: "OTP sent to email" });
-
-  } catch (error) {
-    console.error("Forgot Password Error details:", error);
-    let errorMessage = "Error sending OTP";
-    if (error.code === 'EAUTH') {
-      errorMessage = "Email authentication failed. Please check your EMAIL_USER and EMAIL_PASS in .env";
-    }
-    res.status(500).json({ message: errorMessage, error: error.message });
+    res.json({ message: "OTP sent for password reset" });
+  } catch (err) {
+    console.error("Forgot Password Error:", err);
+    res.status(500).json({ message: "Failed to send reset OTP" });
   }
 });
 
-// RESET PASSWORD
+/* =========================
+   RESET PASSWORD
+========================= */
 router.post("/reset-password", async (req, res) => {
-  const { email, otp, newPassword } = req.body;
-  const normalizedEmail = email?.trim().toLowerCase();
-
   try {
+    const { email, otp, newPassword } = req.body;
+    const normalizedEmail = email.trim().toLowerCase();
+
     const user = await User.findOne({
       email: { $regex: new RegExp(`^${normalizedEmail}$`, "i") },
       resetOTP: otp,
       resetOTPExpires: { $gt: Date.now() },
     });
 
-    if (!user) return res.status(400).json({ message: "Invalid or expired OTP" });
+    if (!user) {
+      return res.status(400).json({ message: "Invalid or expired OTP" });
+    }
 
-    // Hash new password
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    user.password = hashedPassword;
+    user.password = await bcrypt.hash(newPassword, 10);
     user.resetOTP = undefined;
     user.resetOTPExpires = undefined;
+
     await user.save();
 
     res.json({ message: "Password reset successful" });
-
-  } catch (error) {
-    res.status(500).json({ message: "Error resetting password" });
+  } catch (err) {
+    res.status(500).json({ message: "Password reset failed" });
   }
 });
 
-// GET ALL USERS (FOR ADMIN)
+/* =========================
+   ADMIN - GET USERS
+========================= */
 router.get("/users", async (req, res) => {
   try {
     const users = await User.find({}, "username email createdAt");
     res.json(users);
-  } catch (error) {
-    res.status(500).json({ message: "Error fetching users" });
+  } catch {
+    res.status(500).json({ message: "Failed to fetch users" });
   }
 });
 
