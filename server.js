@@ -9,8 +9,9 @@ app.use(
   cors({
     origin: [
       "http://localhost:3000",
-      "https://tjrcis.vercel.app"
-    ],
+      "https://tjrcis.vercel.app",
+      process.env.FRONTEND_URL
+    ].filter(Boolean),
     credentials: true
   })
 );
@@ -18,9 +19,9 @@ app.use(
 app.use(express.json());
 
 // MongoDB connect
-mongoose.connect("mongodb+srv://saiyadayaz116:ca786caa@cluster0.oq51gtz.mongodb.net/medical?appName=Cluster0")
+mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log("MongoDB Connected"))
-  .catch(err => console.log(err));
+  .catch(err => console.error("MongoDB Connection Error:", err));
 
 // Routes
 app.use("/api/auth", require("./routes/authRoutes"));

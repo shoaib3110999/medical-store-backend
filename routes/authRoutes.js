@@ -2,6 +2,7 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
+const auth = require("../middleware/auth");
 
 const User = require("../models/User");
 const RegistrationOTP = require("../models/RegistrationOTP");
@@ -227,7 +228,7 @@ router.post("/reset-password", async (req, res) => {
 /* =========================
    ADMIN - GET USERS
 ========================= */
-router.get("/users", async (req, res) => {
+router.get("/users", auth, async (req, res) => {
   try {
     const users = await User.find({}, "username email createdAt");
     res.json(users);

@@ -1,8 +1,9 @@
 const express = require("express");
 const Appointment = require("../models/Appointment");
+const auth = require("../middleware/auth");
 const router = express.Router();
 
-// CREATE
+// CREATE (Public)
 router.post("/", async (req, res) => {
     try {
         const newAppointment = new Appointment(req.body);
@@ -13,8 +14,8 @@ router.post("/", async (req, res) => {
     }
 });
 
-// READ (ALL)
-router.get("/", async (req, res) => {
+// READ (ALL) - Protected
+router.get("/", auth, async (req, res) => {
     try {
         const appointments = await Appointment.find().sort({ createdAt: -1 });
         res.json(appointments);
@@ -23,8 +24,8 @@ router.get("/", async (req, res) => {
     }
 });
 
-// UPDATE
-router.put("/:id", async (req, res) => {
+// UPDATE - Protected
+router.put("/:id", auth, async (req, res) => {
     try {
         const updatedAppointment = await Appointment.findByIdAndUpdate(
             req.params.id,
@@ -37,8 +38,8 @@ router.put("/:id", async (req, res) => {
     }
 });
 
-// DELETE
-router.delete("/:id", async (req, res) => {
+// DELETE - Protected
+router.delete("/:id", auth, async (req, res) => {
     try {
         await Appointment.findByIdAndDelete(req.params.id);
         res.json({ message: "Appointment deleted successfully" });
